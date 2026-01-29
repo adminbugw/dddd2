@@ -55,20 +55,9 @@ func ParsePort(ports string) (scanPorts []int) {
 
 var BackList map[string]struct{}
 var BackListLock sync.RWMutex
-var PortScanStats struct {
-	TotalScanned   int64
-	SuccessScanned int64
-	FailedScanned  int64
-	Blacklisted    int64
-	StartTime      time.Time
-	LastUpdateTime time.Time
-}
 
 func PortScanTCP(IPs []string, Ports string, NoPorts string, timeout int) []string {
 	var AliveAddress []string
-
-	PortScanStats.StartTime = time.Now()
-	PortScanStats.LastUpdateTime = time.Now()
 
 	gologger.AuditTimeLogger("开始TCP端口扫描，端口设置: %s\nTCP端口扫描目标:%s", Ports, strings.Join(IPs, ","))
 	ports := ParsePort(Ports)
@@ -117,6 +106,7 @@ func PortScanTCP(IPs []string, Ports string, NoPorts string, timeout int) []stri
 	successCountLock := &sync.Mutex{}
 	failedCountLock := &sync.Mutex{}
 
+	startTime := time.Now()
 	doneScan := make(chan struct{})
 	go func() {
 		ticker := time.NewTicker(10 * time.Second)
@@ -133,7 +123,7 @@ func PortScanTCP(IPs []string, Ports string, NoPorts string, timeout int) []stri
 				successCountLock.Unlock()
 				failedCountLock.Unlock()
 
-				elapsed := time.Since(PortScanStats.StartTime).Seconds()
+				elapsed := time.Since(startTime).Seconds()
 				totalProgress := int64(currentSuccess) + int64(currentFailed)
 				avgSpeed := float64(totalProgress) / elapsed
 				eta := float64(totalTargets-int(totalProgress)) / avgSpeed
@@ -161,7 +151,6 @@ func PortScanTCP(IPs []string, Ports string, NoPorts string, timeout int) []stri
 					if !inblack {
 						BackListLock.Lock()
 						BackList[ip] = struct{}{}
-						PortScanStats.Blacklisted++
 						BackListLock.Unlock()
 						gologger.Error().Msgf("%s 端口数量超出阈值(%d),放弃扫描", ip, structs.GlobalConfig.PortsThreshold)
 					}
@@ -173,7 +162,6 @@ func PortScanTCP(IPs []string, Ports string, NoPorts string, timeout int) []stri
 
 			successCountLock.Lock()
 			successCount++
-			PortScanStats.SuccessScanned++
 			successCountLock.Unlock()
 
 			wg.Done()
@@ -200,7 +188,6 @@ func PortScanTCP(IPs []string, Ports string, NoPorts string, timeout int) []stri
 	close(results)
 	close(doneScan)
 
-	PortScanStats.TotalScanned = int64(len(IPs) * len(probePorts))
 	gologger.AuditTimeLogger("TCP端口扫描结束，发现存活端口: %d 个", len(AliveAddress))
 
 	return AliveAddress

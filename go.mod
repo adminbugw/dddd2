@@ -8,7 +8,7 @@ require (
 	github.com/hirochachacha/go-smb2 v1.1.0
 	github.com/jlaffaye/ftp v0.2.0
 	github.com/lib/pq v1.10.9
-	github.com/projectdiscovery/dnsx v1.1.6
+	github.com/projectdiscovery/dnsx v1.2.3
 	github.com/projectdiscovery/gologger v1.1.12
 	github.com/satori/go.uuid v1.2.0
 	github.com/sijms/go-ora/v2 v2.7.9
@@ -269,7 +269,7 @@ require (
 	github.com/projectdiscovery/goconfig v0.0.1 // indirect
 	github.com/projectdiscovery/goflags v0.1.34
 	github.com/projectdiscovery/hmap v0.0.36
-	github.com/projectdiscovery/httpx v1.3.5
+	github.com/projectdiscovery/httpx v1.3.9
 	github.com/projectdiscovery/mapcidr v1.1.16 // indirect
 	github.com/projectdiscovery/ratelimit v0.0.26 // indirect
 	github.com/projectdiscovery/retryabledns v1.0.53 // indirect
@@ -319,9 +319,9 @@ require (
 
 replace (
 	github.com/lcvvvv/gonmap v1.3.4 => ./lib/gonmap
-	github.com/projectdiscovery/dnsx v1.1.6 => ./lib/dnsx
+	github.com/projectdiscovery/dnsx v1.2.3 => ./lib/dnsx
 	github.com/projectdiscovery/gologger v1.1.12 => ./lib/gologger
-	github.com/projectdiscovery/httpx v1.3.5 => ./lib/httpx
+	github.com/projectdiscovery/httpx v1.3.9 => ./lib/httpx
 	github.com/projectdiscovery/nuclei/v3 v3.7.0 => ./lib/nuclei
 	github.com/projectdiscovery/subfinder/v2 v2.6.5 => ./lib/subfinder/v2
 	github.com/tomatome/grdp v0.1.0 => github.com/shadow1ng/grdp v1.0.3
