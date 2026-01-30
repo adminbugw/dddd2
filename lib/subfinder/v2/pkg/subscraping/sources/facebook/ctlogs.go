@@ -45,7 +45,11 @@ func (k *apiKey) FetchAccessToken() {
 		k.Error = err
 		return
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			gologger.Error().Msgf("error closing response body: %s", err)
+		}
+	}()
 	bin, err := io.ReadAll(resp.Body)
 	if err != nil {
 		k.Error = err
@@ -74,6 +78,7 @@ type Source struct {
 	timeTaken time.Duration
 	errors    int
 	results   int
+	requests  int
 	skipped   bool
 }
 
@@ -82,6 +87,7 @@ func (s *Source) Run(ctx context.Context, domain string, session *subscraping.Se
 	results := make(chan subscraping.Result)
 	s.errors = 0
 	s.results = 0
+	s.requests = 0
 
 	if len(s.apiKeys) == 0 {
 		s.skipped = true
@@ -99,7 +105,12 @@ func (s *Source) Run(ctx context.Context, domain string, session *subscraping.Se
 		domainsURL := fmt.Sprintf(domainsUrl, key.AccessToken, domain)
 
 		for {
-			// unfortunately, this cannot be parllelized since pagination is cursor based
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
+			s.requests++
 			resp, err := session.Get(ctx, domainsURL, "", nil)
 			if err != nil {
 				s.errors++
@@ -113,7 +124,7 @@ func (s *Source) Run(ctx context.Context, domain string, session *subscraping.Se
 				results <- subscraping.Result{Source: s.Name(), Type: subscraping.Error, Error: err}
 				return
 			}
-			resp.Body.Close()
+			session.DiscardHTTPResponse(resp)
 			response := &response{}
 			if err := json.Unmarshal(bin, response); err != nil {
 				s.errors++
@@ -122,14 +133,17 @@ func (s *Source) Run(ctx context.Context, domain string, session *subscraping.Se
 			}
 			for _, v := range response.Data {
 				for _, domain := range v.Domains {
-					s.results++
-					results <- subscraping.Result{Source: s.Name(), Type: subscraping.Subdomain, Value: domain}
+					select {
+					case <-ctx.Done():
+						return
+					case results <- subscraping.Result{Source: s.Name(), Type: subscraping.Subdomain, Value: domain}:
+						s.results++
+					}
 				}
 			}
 			if response.Paging.Next == "" {
 				break
 			}
-			// cursor includes api key so no need to update it
 			domainsURL = updateParamInURL(response.Paging.Next, "limit", domainsPerPage)
 		}
 	}()
@@ -153,9 +167,14 @@ func (s *Source) HasRecursiveSupport() bool {
 	return true
 }
 
+// KeyRequirement returns the API key requirement level for this source
+func (s *Source) KeyRequirement() subscraping.KeyRequirement {
+	return subscraping.RequiredKey
+}
+
 // NeedsKey returns true if the source requires an API key
 func (s *Source) NeedsKey() bool {
-	return true
+	return s.KeyRequirement() == subscraping.RequiredKey
 }
 
 // AddApiKeys adds api keys to the source
@@ -181,6 +200,7 @@ func (s *Source) Statistics() subscraping.Statistics {
 	return subscraping.Statistics{
 		Errors:    s.errors,
 		Results:   s.results,
+		Requests:  s.requests,
 		TimeTaken: s.timeTaken,
 		Skipped:   s.skipped,
 	}

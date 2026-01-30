@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/projectdiscovery/subfinder/v2/pkg/subscraping"
@@ -26,6 +27,7 @@ type Source struct {
 	timeTaken time.Duration
 	errors    int
 	results   int
+	requests  int
 	skipped   bool
 }
 
@@ -34,6 +36,7 @@ func (s *Source) Run(ctx context.Context, domain string, session *subscraping.Se
 	results := make(chan subscraping.Result)
 	s.errors = 0
 	s.results = 0
+	s.requests = 0
 
 	go func() {
 		defer func(startTime time.Time) {
@@ -47,14 +50,28 @@ func (s *Source) Run(ctx context.Context, domain string, session *subscraping.Se
 			return
 		}
 
+		randomApiInfo := strings.Split(randomApiKey, ":")
+		if len(randomApiInfo) != 2 {
+			s.skipped = true
+			return
+		}
+		host := randomApiInfo[0]
+		apiKey := randomApiInfo[1]
+
 		headers := map[string]string{
-			"API-KEY":      randomApiKey,
+			"API-KEY":      apiKey,
 			"Accept":       "application/json",
 			"Content-Type": "application/json",
 		}
 		var pages = 1
 		for currentPage := 1; currentPage <= pages; currentPage++ {
-			api := fmt.Sprintf("https://api.zoomeye.org/domain/search?q=%s&type=1&s=1000&page=%d", domain, currentPage)
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
+			api := fmt.Sprintf("https://api.%s/domain/search?q=%s&type=1&s=1000&page=%d", host, domain, currentPage)
+			s.requests++
 			resp, err := session.Get(ctx, api, "", headers)
 			isForbidden := resp != nil && resp.StatusCode == http.StatusForbidden
 			if err != nil {
@@ -78,8 +95,12 @@ func (s *Source) Run(ctx context.Context, domain string, session *subscraping.Se
 			_ = resp.Body.Close()
 			pages = int(res.Total/1000) + 1
 			for _, r := range res.List {
-				results <- subscraping.Result{Source: s.Name(), Type: subscraping.Subdomain, Value: r.Name}
-				s.results++
+				select {
+				case <-ctx.Done():
+					return
+				case results <- subscraping.Result{Source: s.Name(), Type: subscraping.Subdomain, Value: r.Name}:
+					s.results++
+				}
 			}
 		}
 	}()
@@ -100,8 +121,12 @@ func (s *Source) HasRecursiveSupport() bool {
 	return false
 }
 
+func (s *Source) KeyRequirement() subscraping.KeyRequirement {
+	return subscraping.RequiredKey
+}
+
 func (s *Source) NeedsKey() bool {
-	return true
+	return s.KeyRequirement() == subscraping.RequiredKey
 }
 
 func (s *Source) AddApiKeys(keys []string) {
@@ -114,5 +139,6 @@ func (s *Source) Statistics() subscraping.Statistics {
 		Results:   s.results,
 		TimeTaken: s.timeTaken,
 		Skipped:   s.skipped,
+		Requests:  s.requests,
 	}
 }

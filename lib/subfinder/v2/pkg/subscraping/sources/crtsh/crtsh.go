@@ -14,6 +14,7 @@ import (
 	// postgres driver
 	_ "github.com/lib/pq"
 
+	"github.com/projectdiscovery/gologger"
 	"github.com/projectdiscovery/subfinder/v2/pkg/subscraping"
 	contextutil "github.com/projectdiscovery/utils/context"
 )
@@ -28,6 +29,7 @@ type Source struct {
 	timeTaken time.Duration
 	errors    int
 	results   int
+	requests  int
 }
 
 // Run function returns all subdomains found with the service
@@ -35,6 +37,7 @@ func (s *Source) Run(ctx context.Context, domain string, session *subscraping.Se
 	results := make(chan subscraping.Result)
 	s.errors = 0
 	s.results = 0
+	s.requests = 0
 
 	go func() {
 		defer func(startTime time.Time) {
@@ -60,7 +63,11 @@ func (s *Source) getSubdomainsFromSQL(ctx context.Context, domain string, sessio
 		return 0
 	}
 
-	defer db.Close()
+	defer func() {
+		if closeErr := db.Close(); closeErr != nil {
+			gologger.Warning().Msgf("Could not close database connection: %s\n", closeErr)
+		}
+	}()
 
 	limitClause := ""
 	if all, ok := ctx.Value(contextutil.ContextArg("All")).(contextutil.ContextArg); ok {
@@ -95,7 +102,7 @@ func (s *Source) getSubdomainsFromSQL(ctx context.Context, domain string, sessio
 					ca
 				WHERE ci.ISSUER_CA_ID = ca.ID
 				ORDER BY le.ENTRY_TIMESTAMP DESC NULLS LAST;`, limitClause)
-	rows, err := db.Query(query, domain)
+	rows, err := db.QueryContext(ctx, query, domain)
 	if err != nil {
 		results <- subscraping.Result{Source: s.Name(), Type: subscraping.Error, Error: err}
 		s.errors++
@@ -109,8 +116,12 @@ func (s *Source) getSubdomainsFromSQL(ctx context.Context, domain string, sessio
 
 	var count int
 	var data string
-	// Parse all the rows getting subdomains
 	for rows.Next() {
+		select {
+		case <-ctx.Done():
+			return count
+		default:
+		}
 		err := rows.Scan(&data)
 		if err != nil {
 			results <- subscraping.Result{Source: s.Name(), Type: subscraping.Error, Error: err}
@@ -119,11 +130,15 @@ func (s *Source) getSubdomainsFromSQL(ctx context.Context, domain string, sessio
 		}
 
 		count++
-		for _, subdomain := range strings.Split(data, "\n") {
+		for subdomain := range strings.SplitSeq(data, "\n") {
 			for _, value := range session.Extractor.Extract(subdomain) {
 				if value != "" {
-					results <- subscraping.Result{Source: s.Name(), Type: subscraping.Subdomain, Value: value}
-					s.results++
+					select {
+					case <-ctx.Done():
+						return count
+					case results <- subscraping.Result{Source: s.Name(), Type: subscraping.Subdomain, Value: value}:
+						s.results++
+					}
 				}
 			}
 		}
@@ -132,6 +147,7 @@ func (s *Source) getSubdomainsFromSQL(ctx context.Context, domain string, sessio
 }
 
 func (s *Source) getSubdomainsFromHTTP(ctx context.Context, domain string, session *subscraping.Session, results chan subscraping.Result) bool {
+	s.requests++
 	resp, err := session.SimpleGet(ctx, fmt.Sprintf("https://crt.sh/?q=%%25.%s&output=json", domain))
 	if err != nil {
 		results <- subscraping.Result{Source: s.Name(), Type: subscraping.Error, Error: err}
@@ -145,19 +161,28 @@ func (s *Source) getSubdomainsFromHTTP(ctx context.Context, domain string, sessi
 	if err != nil {
 		results <- subscraping.Result{Source: s.Name(), Type: subscraping.Error, Error: err}
 		s.errors++
-		resp.Body.Close()
+		session.DiscardHTTPResponse(resp)
 		return false
 	}
 
-	resp.Body.Close()
+	session.DiscardHTTPResponse(resp)
 
 	for _, subdomain := range subdomains {
-		for _, sub := range strings.Split(subdomain.NameValue, "\n") {
+		select {
+		case <-ctx.Done():
+			return true
+		default:
+		}
+		for sub := range strings.SplitSeq(subdomain.NameValue, "\n") {
 			for _, value := range session.Extractor.Extract(sub) {
 				if value != "" {
-					results <- subscraping.Result{Source: s.Name(), Type: subscraping.Subdomain, Value: value}
+					select {
+					case <-ctx.Done():
+						return true
+					case results <- subscraping.Result{Source: s.Name(), Type: subscraping.Subdomain, Value: value}:
+						s.results++
+					}
 				}
-				s.results++
 			}
 		}
 	}
@@ -178,8 +203,12 @@ func (s *Source) HasRecursiveSupport() bool {
 	return true
 }
 
+func (s *Source) KeyRequirement() subscraping.KeyRequirement {
+	return subscraping.NoKey
+}
+
 func (s *Source) NeedsKey() bool {
-	return false
+	return s.KeyRequirement() == subscraping.RequiredKey
 }
 
 func (s *Source) AddApiKeys(_ []string) {
@@ -190,6 +219,7 @@ func (s *Source) Statistics() subscraping.Statistics {
 	return subscraping.Statistics{
 		Errors:    s.errors,
 		Results:   s.results,
+		Requests:  s.requests,
 		TimeTaken: s.timeTaken,
 	}
 }

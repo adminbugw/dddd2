@@ -355,6 +355,6 @@ replace (
 	github.com/projectdiscovery/gologger v1.1.67 => ./lib/gologger
 	github.com/projectdiscovery/httpx v1.8.1 => ./lib/httpx
 	github.com/projectdiscovery/nuclei/v3 v3.7.0 => ./lib/nuclei
-	github.com/projectdiscovery/subfinder/v2 v2.6.5 => ./lib/subfinder/v2
+	github.com/projectdiscovery/subfinder/v2 v2.12.0 => ./lib/subfinder/v2
 	github.com/tomatome/grdp v0.1.0 => github.com/shadow1ng/grdp v1.0.3
 )

@@ -29,6 +29,7 @@ type Source struct {
 	timeTaken time.Duration
 	errors    int
 	results   int
+	requests  int
 }
 
 // Run function returns all subdomains found with the service
@@ -36,6 +37,7 @@ func (s *Source) Run(ctx context.Context, domain string, session *subscraping.Se
 	results := make(chan subscraping.Result)
 	s.errors = 0
 	s.results = 0
+	s.requests = 0
 
 	go func() {
 		defer func(startTime time.Time) {
@@ -43,6 +45,7 @@ func (s *Source) Run(ctx context.Context, domain string, session *subscraping.Se
 			close(results)
 		}(time.Now())
 
+		s.requests++
 		resp, err := session.SimpleGet(ctx, fmt.Sprintf("https://recon.cloud/api/search?domain=%s", domain))
 		if err != nil && resp == nil {
 			results <- subscraping.Result{Source: s.Name(), Type: subscraping.Error, Error: err}
@@ -56,15 +59,19 @@ func (s *Source) Run(ctx context.Context, domain string, session *subscraping.Se
 		if err != nil {
 			results <- subscraping.Result{Source: s.Name(), Type: subscraping.Error, Error: err}
 			s.errors++
-			resp.Body.Close()
+			session.DiscardHTTPResponse(resp)
 			return
 		}
-		resp.Body.Close()
+		session.DiscardHTTPResponse(resp)
 
 		if len(response.CloudAssetsList) > 0 {
 			for _, cloudAsset := range response.CloudAssetsList {
-				results <- subscraping.Result{Source: s.Name(), Type: subscraping.Subdomain, Value: cloudAsset.Domain}
-				s.results++
+				select {
+				case <-ctx.Done():
+					return
+				case results <- subscraping.Result{Source: s.Name(), Type: subscraping.Subdomain, Value: cloudAsset.Domain}:
+					s.results++
+				}
 			}
 		}
 	}()
@@ -85,8 +92,12 @@ func (s *Source) HasRecursiveSupport() bool {
 	return true
 }
 
+func (s *Source) KeyRequirement() subscraping.KeyRequirement {
+	return subscraping.NoKey
+}
+
 func (s *Source) NeedsKey() bool {
-	return false
+	return s.KeyRequirement() == subscraping.RequiredKey
 }
 
 func (s *Source) AddApiKeys(_ []string) {
@@ -98,5 +109,6 @@ func (s *Source) Statistics() subscraping.Statistics {
 		Errors:    s.errors,
 		Results:   s.results,
 		TimeTaken: s.timeTaken,
+		Requests:  s.requests,
 	}
 }

@@ -36,6 +36,7 @@ type Source struct {
 	timeTaken time.Duration
 	errors    int
 	results   int
+	requests  int
 	skipped   bool
 }
 
@@ -44,6 +45,7 @@ func (s *Source) Run(ctx context.Context, domain string, session *subscraping.Se
 	results := make(chan subscraping.Result)
 	s.errors = 0
 	s.results = 0
+	s.requests = 0
 
 	go func() {
 		defer func(startTime time.Time) {
@@ -58,44 +60,69 @@ func (s *Source) Run(ctx context.Context, domain string, session *subscraping.Se
 		}
 
 		// quake api doc https://quake.360.cn/quake/#/help
-		var requestBody = []byte(fmt.Sprintf(`{"query":"domain: %s", "include":["service.http.host"], "latest": true, "start":0, "size":500}`, domain))
-		resp, err := session.Post(ctx, "https://quake.360.net/api/v3/search/quake_service", "", map[string]string{
-			"Content-Type": "application/json", "X-QuakeToken": randomApiKey,
-		}, bytes.NewReader(requestBody))
-		if err != nil {
-			results <- subscraping.Result{Source: s.Name(), Type: subscraping.Error, Error: err}
-			s.errors++
-			session.DiscardHTTPResponse(resp)
-			return
-		}
+		var pageSize = 500
+		var start = 0
+		var totalResults = -1
 
-		var response quakeResults
-		err = jsoniter.NewDecoder(resp.Body).Decode(&response)
-		if err != nil {
-			results <- subscraping.Result{Source: s.Name(), Type: subscraping.Error, Error: err}
-			s.errors++
-			resp.Body.Close()
-			return
-		}
-		resp.Body.Close()
-
-		if response.Code != 0 {
-			results <- subscraping.Result{
-				Source: s.Name(), Type: subscraping.Error, Error: fmt.Errorf("%s", response.Message),
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			default:
 			}
-			s.errors++
-			return
-		}
+			var requestBody = fmt.Appendf(nil, `{"query":"domain: %s", "include":["service.http.host"], "latest": true, "size":%d, "start":%d}`, domain, pageSize, start)
+			s.requests++
+			resp, err := session.Post(ctx, "https://quake.360.net/api/v3/search/quake_service", "", map[string]string{
+				"Content-Type": "application/json", "X-QuakeToken": randomApiKey,
+			}, bytes.NewReader(requestBody))
+			if err != nil {
+				results <- subscraping.Result{Source: s.Name(), Type: subscraping.Error, Error: err}
+				s.errors++
+				session.DiscardHTTPResponse(resp)
+				return
+			}
 
-		if response.Meta.Pagination.Total > 0 {
+			var response quakeResults
+			err = jsoniter.NewDecoder(resp.Body).Decode(&response)
+			if err != nil {
+				results <- subscraping.Result{Source: s.Name(), Type: subscraping.Error, Error: err}
+				s.errors++
+				session.DiscardHTTPResponse(resp)
+				return
+			}
+			session.DiscardHTTPResponse(resp)
+
+			if response.Code != 0 {
+				results <- subscraping.Result{
+					Source: s.Name(), Type: subscraping.Error, Error: fmt.Errorf("%s", response.Message),
+				}
+				s.errors++
+				return
+			}
+
+			if totalResults == -1 {
+				totalResults = response.Meta.Pagination.Total
+			}
+
 			for _, quakeDomain := range response.Data {
+				select {
+				case <-ctx.Done():
+					return
+				default:
+				}
 				subdomain := quakeDomain.Service.HTTP.Host
 				if strings.ContainsAny(subdomain, "暂无权限") {
-					subdomain = ""
+					continue
 				}
 				results <- subscraping.Result{Source: s.Name(), Type: subscraping.Subdomain, Value: subdomain}
 				s.results++
 			}
+
+			if len(response.Data) == 0 || start+pageSize >= totalResults {
+				break
+			}
+
+			start += pageSize
 		}
 	}()
 
@@ -115,8 +142,12 @@ func (s *Source) HasRecursiveSupport() bool {
 	return false
 }
 
+func (s *Source) KeyRequirement() subscraping.KeyRequirement {
+	return subscraping.RequiredKey
+}
+
 func (s *Source) NeedsKey() bool {
-	return true
+	return s.KeyRequirement() == subscraping.RequiredKey
 }
 
 func (s *Source) AddApiKeys(keys []string) {
@@ -129,5 +160,6 @@ func (s *Source) Statistics() subscraping.Statistics {
 		Results:   s.results,
 		TimeTaken: s.timeTaken,
 		Skipped:   s.skipped,
+		Requests:  s.requests,
 	}
 }

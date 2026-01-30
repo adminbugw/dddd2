@@ -10,10 +10,13 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/projectdiscovery/chaos-client/pkg/chaos"
 	"github.com/projectdiscovery/goflags"
 	"github.com/projectdiscovery/gologger"
 	"github.com/projectdiscovery/subfinder/v2/pkg/passive"
 	"github.com/projectdiscovery/subfinder/v2/pkg/resolve"
+	"github.com/projectdiscovery/subfinder/v2/pkg/subscraping"
+	envutil "github.com/projectdiscovery/utils/env"
 	fileutil "github.com/projectdiscovery/utils/file"
 	folderutil "github.com/projectdiscovery/utils/folder"
 	logutil "github.com/projectdiscovery/utils/log"
@@ -22,8 +25,8 @@ import (
 
 var (
 	configDir                     = folderutil.AppConfigDirOrDefault(".", "subfinder")
-	defaultConfigLocation         = filepath.Join(configDir, "config.yaml")
-	defaultProviderConfigLocation = "config/api-config.yaml"
+	defaultConfigLocation         = envutil.GetEnvOrDefault("SUBFINDER_CONFIG", filepath.Join(configDir, "config.yaml"))
+	defaultProviderConfigLocation = envutil.GetEnvOrDefault("SUBFINDER_PROVIDER_CONFIG", filepath.Join(configDir, "provider-config.yaml"))
 )
 
 // Options contains the configuration options for tuning
@@ -88,7 +91,7 @@ func ParseOptions() *Options {
 
 	flagSet.CreateGroup("source", "Source",
 		flagSet.StringSliceVarP(&options.Sources, "sources", "s", nil, "specific sources to use for discovery (-s crtsh,github). Use -ls to display all available sources.", goflags.NormalizedStringSliceOptions),
-		flagSet.BoolVar(&options.OnlyRecursive, "recursive", false, "use only sources that can handle subdomains recursively (e.g. subdomain.domain.tld vs domain.tld)"),
+		flagSet.BoolVar(&options.OnlyRecursive, "recursive", false, "use only sources that can handle subdomains recursively rather than both recursive and non-recursive sources"),
 		flagSet.BoolVar(&options.All, "all", false, "use all sources for enumeration (slow)"),
 		flagSet.StringSliceVarP(&options.ExcludeSources, "exclude-sources", "es", nil, "sources to exclude from enumeration (-es alienvault,zoomeyeapi)", goflags.NormalizedStringSliceOptions),
 	)
@@ -100,7 +103,7 @@ func ParseOptions() *Options {
 
 	flagSet.CreateGroup("rate-limit", "Rate-limit",
 		flagSet.IntVarP(&options.RateLimit, "rate-limit", "rl", 0, "maximum number of http requests to send per second (global)"),
-		flagSet.RateLimitMapVarP(&options.RateLimits, "rate-limits", "rls", defaultRateLimits, "maximum number of http requests to send per second four providers in key=value format (-rls hackertarget=10/m)", goflags.NormalizedStringSliceOptions),
+		flagSet.RateLimitMapVarP(&options.RateLimits, "rate-limits", "rls", defaultRateLimits, "maximum number of http requests to send per second for providers in key=value format (-rls hackertarget=10/m)", goflags.NormalizedStringSliceOptions),
 		flagSet.IntVar(&options.Threads, "t", 10, "number of concurrent goroutines for resolving (-active only)"),
 	)
 
@@ -146,6 +149,9 @@ func ParseOptions() *Options {
 		os.Exit(1)
 	}
 
+	// set chaos mode
+	chaos.IsSDK = false
+
 	if exists := fileutil.FileExists(defaultProviderConfigLocation); !exists {
 		if err := createProviderConfigYAML(defaultProviderConfigLocation); err != nil {
 			gologger.Error().Msgf("Could not create provider config file: %s\n", err)
@@ -165,20 +171,16 @@ func ParseOptions() *Options {
 	// Check if stdin pipe was given
 	options.Stdin = fileutil.HasStdin()
 
-	// Read the inputs and configure the logging
-	options.configureOutput()
-
 	if options.Version {
 		gologger.Info().Msgf("Current Version: %s\n", version)
 		gologger.Info().Msgf("Subfinder Config Directory: %s", configDir)
 		os.Exit(0)
 	}
 
-	options.preProcessOptions()
+	options.preProcessDomains()
 
-	if !options.Silent {
-		showBanner()
-	}
+	options.ConfigureOutput()
+	showBanner()
 
 	if !options.DisableUpdateCheck {
 		latestVersion, err := updateutils.GetToolVersionCallback("subfinder", version)()
@@ -215,36 +217,40 @@ func (options *Options) loadProvidersFrom(location string) {
 
 	// We skip bailing out if file doesn't exist because we'll create it
 	// at the end of options parsing from default via goflags.
-	if err := UnmarshalFrom(location); err != nil && (!strings.Contains(err.Error(), "file doesn't exist") || errors.Is(os.ErrNotExist, err)) {
+	if err := UnmarshalFrom(location); err != nil && (!strings.Contains(err.Error(), "file doesn't exist") || errors.Is(err, os.ErrNotExist)) {
 		gologger.Error().Msgf("Could not read providers from %s: %s\n", location, err)
 	}
 }
 
 func listSources(options *Options) {
 	gologger.Info().Msgf("Current list of available sources. [%d]\n", len(passive.AllSources))
-	gologger.Info().Msgf("Sources marked with an * need key(s) or token(s) to work.\n")
+	gologger.Info().Msgf("Sources marked with an * require key(s) or token(s) to work.\n")
+	gologger.Info().Msgf("Sources marked with a ~ optionally support key(s) for better results.\n")
 	gologger.Info().Msgf("You can modify %s to configure your keys/tokens.\n\n", options.ProviderConfig)
 
 	for _, source := range passive.AllSources {
-		message := "%s\n"
 		sourceName := source.Name()
-		if source.NeedsKey() {
-			message = "%s *\n"
+		switch source.KeyRequirement() {
+		case subscraping.RequiredKey:
+			gologger.Silent().Msgf("%s *\n", sourceName)
+		case subscraping.OptionalKey:
+			gologger.Silent().Msgf("%s ~\n", sourceName)
+		default:
+			gologger.Silent().Msgf("%s\n", sourceName)
 		}
-		gologger.Silent().Msgf(message, sourceName)
 	}
 }
 
-func (options *Options) preProcessOptions() {
+func (options *Options) preProcessDomains() {
 	for i, domain := range options.Domain {
-		options.Domain[i], _ = sanitize(domain)
+		options.Domain[i] = preprocessDomain(domain)
 	}
 }
 
 var defaultRateLimits = []string{
 	"github=30/m",
-	// "gitlab=2000/m",
 	"fullhunt=60/m",
+	"pugrecon=10/s",
 	fmt.Sprintf("robtex=%d/ms", uint(math.MaxUint)),
 	"securitytrails=1/s",
 	"shodan=1/s",
@@ -254,4 +260,9 @@ var defaultRateLimits = []string{
 	"waybackarchive=15/m",
 	"whoisxmlapi=50/s",
 	"securitytrails=2/s",
+	"sitedossier=8/m",
+	"netlas=1/s",
+	// "gitlab=2/s",
+	"github=83/m",
+	"hudsonrock=5/s",
 }

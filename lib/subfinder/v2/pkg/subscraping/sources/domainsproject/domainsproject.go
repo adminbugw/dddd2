@@ -1,10 +1,10 @@
-// Package passivetotal logic
-package passivetotal
+// Package domainsproject logic
+package domainsproject
 
 import (
-	"bytes"
 	"context"
-	"regexp"
+	"fmt"
+	"strings"
 	"time"
 
 	jsoniter "github.com/json-iterator/go"
@@ -12,18 +12,13 @@ import (
 	"github.com/projectdiscovery/subfinder/v2/pkg/subscraping"
 )
 
-var passiveTotalFilterRegex = regexp.MustCompile(`^(?:\d{1,3}\.){3}\d{1,3}\\032`)
-
-type response struct {
-	Subdomains []string `json:"subdomains"`
-}
-
 // Source is the passive scraping agent
 type Source struct {
 	apiKeys   []apiKey
 	timeTaken time.Duration
 	errors    int
 	results   int
+	requests  int
 	skipped   bool
 }
 
@@ -32,11 +27,17 @@ type apiKey struct {
 	password string
 }
 
+type domainsProjectResponse struct {
+	Domains []string `json:"domains"`
+	Error   string   `json:"error"`
+}
+
 // Run function returns all subdomains found with the service
 func (s *Source) Run(ctx context.Context, domain string, session *subscraping.Session) <-chan subscraping.Result {
 	results := make(chan subscraping.Result)
 	s.errors = 0
 	s.results = 0
+	s.requests = 0
 
 	go func() {
 		defer func(startTime time.Time) {
@@ -50,16 +51,15 @@ func (s *Source) Run(ctx context.Context, domain string, session *subscraping.Se
 			return
 		}
 
-		// Create JSON Get body
-		var request = []byte(`{"query":"` + domain + `"}`)
-
+		searchURL := fmt.Sprintf("https://api.domainsproject.org/api/tld/search?domain=%s", domain)
+		s.requests++
 		resp, err := session.HTTPRequest(
 			ctx,
 			"GET",
-			"https://api.passivetotal.org/v2/enrichment/subdomains",
+			searchURL,
 			"",
-			map[string]string{"Content-Type": "application/json"},
-			bytes.NewBuffer(request),
+			nil,
+			nil,
 			subscraping.BasicAuth{Username: randomApiKey.username, Password: randomApiKey.password},
 		)
 		if err != nil {
@@ -69,24 +69,38 @@ func (s *Source) Run(ctx context.Context, domain string, session *subscraping.Se
 			return
 		}
 
-		var data response
-		err = jsoniter.NewDecoder(resp.Body).Decode(&data)
+		defer func() {
+			if err := resp.Body.Close(); err != nil {
+				results <- subscraping.Result{Source: s.Name(), Type: subscraping.Error, Error: err}
+				s.errors++
+			}
+		}()
+
+		var response domainsProjectResponse
+		err = jsoniter.NewDecoder(resp.Body).Decode(&response)
 		if err != nil {
 			results <- subscraping.Result{Source: s.Name(), Type: subscraping.Error, Error: err}
 			s.errors++
-			resp.Body.Close()
 			return
 		}
-		resp.Body.Close()
 
-		for _, subdomain := range data.Subdomains {
-			// skip entries like xxx.xxx.xxx.xxx\032domain.tld
-			if passiveTotalFilterRegex.MatchString(subdomain) {
-				continue
+		if response.Error != "" {
+			results <- subscraping.Result{
+				Source: s.Name(), Type: subscraping.Error, Error: fmt.Errorf("%v", response.Error),
 			}
-			finalSubdomain := subdomain + "." + domain
-			results <- subscraping.Result{Source: s.Name(), Type: subscraping.Subdomain, Value: finalSubdomain}
-			s.results++
+			s.errors++
+			return
+		}
+
+		for _, subdomain := range response.Domains {
+			if !strings.HasPrefix(subdomain, ".") {
+				select {
+				case <-ctx.Done():
+					return
+				case results <- subscraping.Result{Source: s.Name(), Type: subscraping.Subdomain, Value: subdomain}:
+					s.results++
+				}
+			}
 		}
 	}()
 
@@ -95,7 +109,7 @@ func (s *Source) Run(ctx context.Context, domain string, session *subscraping.Se
 
 // Name returns the name of the source
 func (s *Source) Name() string {
-	return "passivetotal"
+	return "domainsproject"
 }
 
 func (s *Source) IsDefault() bool {
@@ -103,11 +117,15 @@ func (s *Source) IsDefault() bool {
 }
 
 func (s *Source) HasRecursiveSupport() bool {
-	return true
+	return false
+}
+
+func (s *Source) KeyRequirement() subscraping.KeyRequirement {
+	return subscraping.RequiredKey
 }
 
 func (s *Source) NeedsKey() bool {
-	return true
+	return s.KeyRequirement() == subscraping.RequiredKey
 }
 
 func (s *Source) AddApiKeys(keys []string) {
@@ -120,6 +138,7 @@ func (s *Source) Statistics() subscraping.Statistics {
 	return subscraping.Statistics{
 		Errors:    s.errors,
 		Results:   s.results,
+		Requests:  s.requests,
 		TimeTaken: s.timeTaken,
 		Skipped:   s.skipped,
 	}

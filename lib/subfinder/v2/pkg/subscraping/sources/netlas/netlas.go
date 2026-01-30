@@ -4,12 +4,12 @@ package netlas
 import (
 	"context"
 	"io"
+	"strings"
 
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
-	"strconv"
 	"time"
 
 	"github.com/projectdiscovery/subfinder/v2/pkg/subscraping"
@@ -30,11 +30,6 @@ type Item struct {
 	} `json:"data"`
 }
 
-type DomainsResponse struct {
-	Items []Item `json:"items"`
-	Took  int    `json:"took"`
-}
-
 type DomainsCountResponse struct {
 	Count int `json:"count"`
 }
@@ -45,6 +40,7 @@ type Source struct {
 	timeTaken time.Duration
 	errors    int
 	results   int
+	requests  int
 	skipped   bool
 }
 
@@ -52,6 +48,7 @@ func (s *Source) Run(ctx context.Context, domain string, session *subscraping.Se
 	results := make(chan subscraping.Result)
 	s.errors = 0
 	s.results = 0
+	s.requests = 0
 
 	go func() {
 		defer func(startTime time.Time) {
@@ -68,7 +65,8 @@ func (s *Source) Run(ctx context.Context, domain string, session *subscraping.Se
 
 		// Pick an API key
 		randomApiKey := subscraping.PickRandom(s.apiKeys, s.Name())
-		resp, err := session.HTTPRequest(ctx, http.MethodGet, countUrl, "", map[string]string{
+		s.requests++
+		resp1, err := session.HTTPRequest(ctx, http.MethodGet, countUrl, "", map[string]string{
 			"accept":    "application/json",
 			"X-API-Key": randomApiKey,
 		}, nil, subscraping.BasicAuth{})
@@ -77,14 +75,19 @@ func (s *Source) Run(ctx context.Context, domain string, session *subscraping.Se
 			results <- subscraping.Result{Source: s.Name(), Type: subscraping.Error, Error: err}
 			s.errors++
 			return
-		} else if resp.StatusCode != 200 {
-			results <- subscraping.Result{Source: s.Name(), Type: subscraping.Error, Error: fmt.Errorf("request rate limited with status code %d", resp.StatusCode)}
+		} else if resp1.StatusCode != 200 {
+			results <- subscraping.Result{Source: s.Name(), Type: subscraping.Error, Error: fmt.Errorf("request rate limited with status code %d", resp1.StatusCode)}
 			s.errors++
 			return
 		}
-		defer resp.Body.Close()
+		defer func() {
+			if err := resp1.Body.Close(); err != nil {
+				results <- subscraping.Result{Source: s.Name(), Type: subscraping.Error, Error: err}
+				s.errors++
+			}
+		}()
 
-		body, err := io.ReadAll(resp.Body)
+		body, err := io.ReadAll(resp1.Body)
 		if err != nil {
 			results <- subscraping.Result{Source: s.Name(), Type: subscraping.Error, Error: fmt.Errorf("error reading ressponse body")}
 			s.errors++
@@ -100,60 +103,69 @@ func (s *Source) Run(ctx context.Context, domain string, session *subscraping.Se
 			return
 		}
 
-		//Define the API endpoint URL and query parameters
+		// Make a single POST request to get all domains via download method
 
-		for i := 0; i < domainsCount.Count; i += 20 {
+		apiUrl := "https://app.netlas.io/api/domains/download/"
+		query := fmt.Sprintf("domain:*.%s AND NOT domain:%s", domain, domain)
+		requestBody := map[string]any{
+			"q":           query,
+			"fields":      []string{"*"},
+			"source_type": "include",
+			"size":        domainsCount.Count,
+		}
+		jsonRequestBody, err := json.Marshal(requestBody)
+		if err != nil {
+			results <- subscraping.Result{Source: s.Name(), Type: subscraping.Error, Error: fmt.Errorf("error marshaling request body")}
+			s.errors++
+			return
+		}
 
-			time.Sleep(1000 * time.Millisecond)
-			offset := strconv.Itoa(i)
+		// Pick an API key
+		randomApiKey = subscraping.PickRandom(s.apiKeys, s.Name())
 
-			endpoint := "https://app.netlas.io/api/domains/"
-			params := url.Values{}
-			query := fmt.Sprintf("domain:(domain:*.%s AND NOT domain:%s)", domain, domain)
-			params.Set("q", query)
-			params.Set("source_type", "include")
-			params.Set("start", offset)
-			params.Set("fields", "*")
-			apiUrl := endpoint + "?" + params.Encode()
-
-			// Pick an API key
-			randomApiKey := subscraping.PickRandom(s.apiKeys, s.Name())
-
-			resp, err := session.HTTPRequest(ctx, http.MethodGet, apiUrl, "", map[string]string{
-				"accept":    "application/json",
-				"X-API-Key": randomApiKey}, nil, subscraping.BasicAuth{})
-			if err != nil {
+		s.requests++
+		resp2, err := session.HTTPRequest(ctx, http.MethodPost, apiUrl, "", map[string]string{
+			"accept":       "application/json",
+			"X-API-Key":    randomApiKey,
+			"Content-Type": "application/json"}, strings.NewReader(string(jsonRequestBody)), subscraping.BasicAuth{})
+		if err != nil {
+			results <- subscraping.Result{Source: s.Name(), Type: subscraping.Error, Error: err}
+			s.errors++
+			return
+		}
+		defer func() {
+			if err := resp2.Body.Close(); err != nil {
 				results <- subscraping.Result{Source: s.Name(), Type: subscraping.Error, Error: err}
 				s.errors++
-				return
 			}
-			defer resp.Body.Close()
-			body, err := io.ReadAll(resp.Body)
-			if err != nil {
-				results <- subscraping.Result{Source: s.Name(), Type: subscraping.Error, Error: fmt.Errorf("error reading ressponse body")}
-				s.errors++
-				return
-			}
+		}()
+		body, err = io.ReadAll(resp2.Body)
+		if err != nil {
+			results <- subscraping.Result{Source: s.Name(), Type: subscraping.Error, Error: fmt.Errorf("error reading ressponse body")}
+			s.errors++
+			return
+		}
 
-			if resp.StatusCode == 429 {
-				results <- subscraping.Result{Source: s.Name(), Type: subscraping.Error, Error: fmt.Errorf("request rate limited with status code %d", resp.StatusCode)}
-				s.errors++
-				break
-			}
+		if resp2.StatusCode == 429 {
+			results <- subscraping.Result{Source: s.Name(), Type: subscraping.Error, Error: fmt.Errorf("request rate limited with status code %d", resp2.StatusCode)}
+			s.errors++
+			return
+		}
 
-			// Parse the response body and extract the domain values
-			var data DomainsResponse
-			err = json.Unmarshal(body, &data)
-			if err != nil {
-				results <- subscraping.Result{Source: s.Name(), Type: subscraping.Error, Error: err}
-				s.errors++
+		// Parse the response body and extract the domain values
+		var data []Item
+		err = json.Unmarshal(body, &data)
+		if err != nil {
+			results <- subscraping.Result{Source: s.Name(), Type: subscraping.Error, Error: err}
+			s.errors++
+			return
+		}
+
+		for _, item := range data {
+			select {
+			case <-ctx.Done():
 				return
-			}
-
-			for _, item := range data.Items {
-				results <- subscraping.Result{
-					Source: s.Name(), Type: subscraping.Subdomain, Value: item.Data.Domain,
-				}
+			case results <- subscraping.Result{Source: s.Name(), Type: subscraping.Subdomain, Value: item.Data.Domain}:
 				s.results++
 			}
 		}
@@ -176,8 +188,12 @@ func (s *Source) HasRecursiveSupport() bool {
 	return false
 }
 
+func (s *Source) KeyRequirement() subscraping.KeyRequirement {
+	return subscraping.RequiredKey
+}
+
 func (s *Source) NeedsKey() bool {
-	return true
+	return s.KeyRequirement() == subscraping.RequiredKey
 }
 
 func (s *Source) AddApiKeys(keys []string) {
@@ -188,6 +204,7 @@ func (s *Source) Statistics() subscraping.Statistics {
 	return subscraping.Statistics{
 		Errors:    s.errors,
 		Results:   s.results,
+		Requests:  s.requests,
 		TimeTaken: s.timeTaken,
 		Skipped:   s.skipped,
 	}

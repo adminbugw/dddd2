@@ -18,14 +18,23 @@ import (
 
 const maxNumCount = 2
 
+var replacer = strings.NewReplacer(
+	"/", "",
+	"•.", "",
+	"•", "",
+	"*.", "",
+	"http://", "",
+	"https://", "",
+)
+
 // EnumerateSingleDomain wraps EnumerateSingleDomainWithCtx with an empty context
-func (r *Runner) EnumerateSingleDomain(domain string, writers []io.Writer) error {
+func (r *Runner) EnumerateSingleDomain(domain string, writers []io.Writer) (map[string]map[string]struct{}, error) {
 	return r.EnumerateSingleDomainWithCtx(context.Background(), domain, writers)
 }
 
 // EnumerateSingleDomainWithCtx performs subdomain enumeration against a single domain
-func (r *Runner) EnumerateSingleDomainWithCtx(ctx context.Context, domain string, writers []io.Writer) error {
-	gologger.Info().Msgf("被动子域名收集: %s\n", domain)
+func (r *Runner) EnumerateSingleDomainWithCtx(ctx context.Context, domain string, writers []io.Writer) (map[string]map[string]struct{}, error) {
+	gologger.Info().Msgf("Enumerating subdomains for %s\n", domain)
 
 	// Check if the user has asked to remove wildcards explicitly.
 	// If yes, create the resolution pool and get the wildcards for the current domain
@@ -55,14 +64,18 @@ func (r *Runner) EnumerateSingleDomainWithCtx(ctx context.Context, domain string
 		for result := range passiveResults {
 			switch result.Type {
 			case subscraping.Error:
-				gologger.Warning().Msgf("Could not run source %s: %s\n", result.Source, result.Error)
+				gologger.Warning().Msgf("Encountered an error with source %s: %s\n", result.Source, result.Error)
 			case subscraping.Subdomain:
+				subdomain := replacer.Replace(result.Value)
+				// check if this subdomain is actually a wildcard subdomain
+				// that may have furthur subdomains associated with it
+				isWildcard := strings.Contains(result.Value, "*."+subdomain)
+
 				// Validate the subdomain found and remove wildcards from
-				if !strings.HasSuffix(result.Value, "."+domain) {
+				if !strings.HasSuffix(subdomain, "."+domain) {
 					skippedCounts[result.Source]++
 					continue
 				}
-				subdomain := strings.ReplaceAll(strings.ToLower(result.Value), "*.", "")
 
 				if matchSubdomain := r.filterAndMatchSubdomain(subdomain); matchSubdomain {
 					if _, ok := uniqueMap[subdomain]; !ok {
@@ -80,10 +93,20 @@ func (r *Runner) EnumerateSingleDomainWithCtx(ctx context.Context, domain string
 					// send the subdomain for resolution.
 					if _, ok := uniqueMap[subdomain]; ok {
 						skippedCounts[result.Source]++
+						// even if it is duplicate if it was not marked as wildcard before but this source says it is wildcard
+						// then we should mark it as wildcard
+						if !uniqueMap[subdomain].WildcardCertificate && isWildcard {
+							val := uniqueMap[subdomain]
+							val.WildcardCertificate = true
+							uniqueMap[subdomain] = val
+						}
 						continue
 					}
 
-					hostEntry := resolve.HostEntry{Domain: domain, Host: subdomain, Source: result.Source}
+					hostEntry := resolve.HostEntry{Domain: domain, Host: subdomain, Source: result.Source, WildcardCertificate: isWildcard}
+					if r.options.ResultCallback != nil && !r.options.RemoveWildcard {
+						r.options.ResultCallback(&hostEntry)
+					}
 
 					uniqueMap[subdomain] = hostEntry
 					// If the user asked to remove wildcard then send on the resolve
@@ -99,6 +122,7 @@ func (r *Runner) EnumerateSingleDomainWithCtx(ctx context.Context, domain string
 		if r.options.RemoveWildcard {
 			close(resolutionPool.Tasks)
 		}
+
 		wg.Done()
 	}()
 
@@ -115,7 +139,20 @@ func (r *Runner) EnumerateSingleDomainWithCtx(ctx context.Context, domain string
 				// Add the found subdomain to a map.
 				if _, ok := foundResults[result.Host]; !ok {
 					foundResults[result.Host] = result
+					if r.options.ResultCallback != nil {
+						r.options.ResultCallback(&resolve.HostEntry{Domain: domain, Host: result.Host, Source: result.Source, WildcardCertificate: result.WildcardCertificate})
+					}
 				}
+			}
+		}
+
+		// Merge wildcard certificate information from uniqueMap into foundResults
+		// This handles cases where a later source marked a subdomain as wildcard
+		// after it was already sent to the resolution pool
+		for host, result := range foundResults {
+			if entry, ok := uniqueMap[host]; ok && entry.WildcardCertificate && !result.WildcardCertificate {
+				result.WildcardCertificate = true
+				foundResults[host] = result
 			}
 		}
 	}
@@ -139,7 +176,7 @@ func (r *Runner) EnumerateSingleDomainWithCtx(ctx context.Context, domain string
 		}
 		if err != nil {
 			gologger.Error().Msgf("Could not write results for %s: %s\n", domain, err)
-			return err
+			return nil, err
 		}
 	}
 
@@ -152,18 +189,7 @@ func (r *Runner) EnumerateSingleDomainWithCtx(ctx context.Context, domain string
 		numberOfSubDomains = len(uniqueMap)
 	}
 
-	if r.options.ResultCallback != nil {
-		if r.options.RemoveWildcard {
-			for host, result := range foundResults {
-				r.options.ResultCallback(&resolve.HostEntry{Domain: host, Host: result.Host, Source: result.Source})
-			}
-		} else {
-			for _, v := range uniqueMap {
-				r.options.ResultCallback(&v)
-			}
-		}
-	}
-	gologger.Info().Msgf("被动收集找到 [%d] 个子域名 [%s] [%ss]\n", numberOfSubDomains, domain, duration)
+	gologger.Info().Msgf("Found %d subdomains for %s in %s\n", numberOfSubDomains, domain, duration)
 
 	if r.options.Statistics {
 		gologger.Info().Msgf("Printing source statistics for %s", domain)
@@ -180,7 +206,7 @@ func (r *Runner) EnumerateSingleDomainWithCtx(ctx context.Context, domain string
 		printStatistics(statistics)
 	}
 
-	return nil
+	return sourceMap, nil
 }
 
 func (r *Runner) filterAndMatchSubdomain(subdomain string) bool {

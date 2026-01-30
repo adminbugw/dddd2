@@ -19,22 +19,25 @@ type OutputWriter struct {
 }
 
 type jsonSourceResult struct {
-	Host   string `json:"host"`
-	Input  string `json:"input"`
-	Source string `json:"source"`
+	Host                string `json:"host"`
+	Input               string `json:"input"`
+	Source              string `json:"source"`
+	WildcardCertificate bool   `json:"wildcard_certificate,omitempty"`
 }
 
 type jsonSourceIPResult struct {
-	Host   string `json:"host"`
-	IP     string `json:"ip"`
-	Input  string `json:"input"`
-	Source string `json:"source"`
+	Host                string `json:"host"`
+	IP                  string `json:"ip"`
+	Input               string `json:"input"`
+	Source              string `json:"source"`
+	WildcardCertificate bool   `json:"wildcard_certificate,omitempty"`
 }
 
 type jsonSourcesResult struct {
-	Host    string   `json:"host"`
-	Input   string   `json:"input"`
-	Sources []string `json:"sources"`
+	Host                string   `json:"host"`
+	Input               string   `json:"input"`
+	Sources             []string `json:"sources"`
+	WildcardCertificate bool     `json:"wildcard_certificate,omitempty"`
 }
 
 // NewOutputWriter creates a new OutputWriter
@@ -97,7 +100,9 @@ func writePlainHostIP(_ string, results map[string]resolve.Result, writer io.Wri
 
 		_, err := bufwriter.WriteString(sb.String())
 		if err != nil {
-			bufwriter.Flush()
+			if flushErr := bufwriter.Flush(); flushErr != nil {
+				return errors.Join(err, flushErr)
+			}
 			return err
 		}
 		sb.Reset()
@@ -115,7 +120,7 @@ func writeJSONHostIP(input string, results map[string]resolve.Result, writer io.
 		data.IP = result.IP
 		data.Input = input
 		data.Source = result.Source
-
+		data.WildcardCertificate = result.WildcardCertificate
 		err := encoder.Encode(&data)
 		if err != nil {
 			return err
@@ -128,7 +133,7 @@ func writeJSONHostIP(input string, results map[string]resolve.Result, writer io.
 func (o *OutputWriter) WriteHostNoWildcard(input string, results map[string]resolve.Result, writer io.Writer) error {
 	hosts := make(map[string]resolve.HostEntry)
 	for host, result := range results {
-		hosts[host] = resolve.HostEntry{Domain: host, Host: result.Host, Source: result.Source}
+		hosts[host] = resolve.HostEntry{Domain: host, Host: result.Host, Source: result.Source, WildcardCertificate: result.WildcardCertificate}
 	}
 
 	return o.WriteHost(input, hosts, writer)
@@ -155,7 +160,9 @@ func writePlainHost(_ string, results map[string]resolve.HostEntry, writer io.Wr
 
 		_, err := bufwriter.WriteString(sb.String())
 		if err != nil {
-			bufwriter.Flush()
+			if flushErr := bufwriter.Flush(); flushErr != nil {
+				return errors.Join(err, flushErr)
+			}
 			return err
 		}
 		sb.Reset()
@@ -171,6 +178,7 @@ func writeJSONHost(input string, results map[string]resolve.HostEntry, writer io
 		data.Host = result.Host
 		data.Input = input
 		data.Source = result.Source
+		data.WildcardCertificate = result.WildcardCertificate
 		err := encoder.Encode(data)
 		if err != nil {
 			return err
@@ -219,16 +227,19 @@ func writeSourcePlainHost(_ string, sourceMap map[string]map[string]struct{}, wr
 	for host, sources := range sourceMap {
 		sb.WriteString(host)
 		sb.WriteString(",[")
-		sourcesString := ""
+		var sourcesString strings.Builder
 		for source := range sources {
-			sourcesString += source + ","
+			sourcesString.WriteString(source)
+			sourcesString.WriteRune(',')
 		}
-		sb.WriteString(strings.Trim(sourcesString, ", "))
+		sb.WriteString(strings.TrimSuffix(sourcesString.String(), ","))
 		sb.WriteString("]\n")
 
 		_, err := bufwriter.WriteString(sb.String())
 		if err != nil {
-			bufwriter.Flush()
+			if flushErr := bufwriter.Flush(); flushErr != nil {
+				return errors.Join(err, flushErr)
+			}
 			return err
 		}
 		sb.Reset()

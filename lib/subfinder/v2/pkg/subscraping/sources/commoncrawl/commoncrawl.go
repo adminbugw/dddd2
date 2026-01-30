@@ -32,6 +32,7 @@ type Source struct {
 	timeTaken time.Duration
 	errors    int
 	results   int
+	requests  int
 }
 
 // Run function returns all subdomains found with the service
@@ -39,6 +40,7 @@ func (s *Source) Run(ctx context.Context, domain string, session *subscraping.Se
 	results := make(chan subscraping.Result)
 	s.errors = 0
 	s.results = 0
+	s.requests = 0
 
 	go func() {
 		defer func(startTime time.Time) {
@@ -46,6 +48,7 @@ func (s *Source) Run(ctx context.Context, domain string, session *subscraping.Se
 			close(results)
 		}(time.Now())
 
+		s.requests++
 		resp, err := session.SimpleGet(ctx, indexURL)
 		if err != nil {
 			results <- subscraping.Result{Source: s.Name(), Type: subscraping.Error, Error: err}
@@ -59,13 +62,13 @@ func (s *Source) Run(ctx context.Context, domain string, session *subscraping.Se
 		if err != nil {
 			results <- subscraping.Result{Source: s.Name(), Type: subscraping.Error, Error: err}
 			s.errors++
-			resp.Body.Close()
+			session.DiscardHTTPResponse(resp)
 			return
 		}
-		resp.Body.Close()
+		session.DiscardHTTPResponse(resp)
 
 		years := make([]string, 0)
-		for i := 0; i < maxYearsBack; i++ {
+		for i := range maxYearsBack {
 			years = append(years, strconv.Itoa(year-i))
 		}
 
@@ -105,8 +108,12 @@ func (s *Source) HasRecursiveSupport() bool {
 	return false
 }
 
+func (s *Source) KeyRequirement() subscraping.KeyRequirement {
+	return subscraping.NoKey
+}
+
 func (s *Source) NeedsKey() bool {
-	return false
+	return s.KeyRequirement() == subscraping.RequiredKey
 }
 
 func (s *Source) AddApiKeys(_ []string) {
@@ -117,6 +124,7 @@ func (s *Source) Statistics() subscraping.Statistics {
 	return subscraping.Statistics{
 		Errors:    s.errors,
 		Results:   s.results,
+		Requests:  s.requests,
 		TimeTaken: s.timeTaken,
 	}
 }
@@ -128,15 +136,23 @@ func (s *Source) getSubdomains(ctx context.Context, searchURL, domain string, se
 			return false
 		default:
 			var headers = map[string]string{"Host": "index.commoncrawl.org"}
+			s.requests++
 			resp, err := session.Get(ctx, fmt.Sprintf("%s?url=*.%s", searchURL, domain), "", headers)
 			if err != nil {
 				results <- subscraping.Result{Source: s.Name(), Type: subscraping.Error, Error: err}
+				s.errors++
 				session.DiscardHTTPResponse(resp)
 				return false
 			}
 
 			scanner := bufio.NewScanner(resp.Body)
 			for scanner.Scan() {
+				select {
+				case <-ctx.Done():
+					session.DiscardHTTPResponse(resp)
+					return false
+				default:
+				}
 				line := scanner.Text()
 				if line == "" {
 					continue
@@ -144,16 +160,21 @@ func (s *Source) getSubdomains(ctx context.Context, searchURL, domain string, se
 				line, _ = url.QueryUnescape(line)
 				for _, subdomain := range session.Extractor.Extract(line) {
 					if subdomain != "" {
-						// fix for triple encoded URL
 						subdomain = strings.ToLower(subdomain)
 						subdomain = strings.TrimPrefix(subdomain, "25")
 						subdomain = strings.TrimPrefix(subdomain, "2f")
 
-						results <- subscraping.Result{Source: s.Name(), Type: subscraping.Subdomain, Value: subdomain}
+						select {
+						case <-ctx.Done():
+							session.DiscardHTTPResponse(resp)
+							return false
+						case results <- subscraping.Result{Source: s.Name(), Type: subscraping.Subdomain, Value: subdomain}:
+							s.results++
+						}
 					}
 				}
 			}
-			resp.Body.Close()
+			session.DiscardHTTPResponse(resp)
 			return true
 		}
 	}
