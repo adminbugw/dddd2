@@ -26,14 +26,13 @@
 
 ---
 
-
 `dnsx` is a fast and multi-purpose DNS toolkit designed for running various probes through the [retryabledns](https://github.com/projectdiscovery/retryabledns) library. It supports multiple DNS queries, user supplied resolvers, DNS wildcard filtering like [shuffledns](https://github.com/projectdiscovery/shuffledns) etc.
 
 
 # Features
 
 <h1 align="left">
-  <img src="static/dnsx-run.png" alt="dnsx" width="700px"></a>
+  <img src="https://github.com/projectdiscovery/dnsx/assets/8293321/73fe69a0-15b8-4b54-bacc-e201edd90103" alt="dnsx" width="700px"></a>
   <br>
 </h1>
 
@@ -49,7 +48,7 @@
 # Installation Instructions
 
 
-`dnsx` requires **go1.19** to install successfully. Run the following command to install the latest version: 
+`dnsx` requires **go1.21** to install successfully. Run the following command to install the latest version: 
 
 ```sh
 go install -v github.com/projectdiscovery/dnsx/cmd/dnsx@latest
@@ -70,17 +69,20 @@ INPUT:
    -w, -wordlist string  list of words to bruteforce (file or comma separated or stdin)
 
 QUERY:
-   -a      query A record (default)
-   -aaaa   query AAAA record
-   -cname  query CNAME record
-   -ns     query NS record
-   -txt    query TXT record
-   -srv    query SRV record
-   -ptr    query PTR record
-   -mx     query MX record
-   -soa    query SOA record
-   -axfr   query AXFR
-   -caa    query CAA record
+   -a                       query A record (default)
+   -aaaa                    query AAAA record
+   -cname                   query CNAME record
+   -ns                      query NS record
+   -txt                     query TXT record
+   -srv                     query SRV record
+   -ptr                     query PTR record
+   -mx                      query MX record
+   -soa                     query SOA record
+   -any                     query ANY record
+   -axfr                    query AXFR
+   -caa                     query CAA record
+   -recon                   query all the dns records (a,aaaa,cname,ns,txt,srv,ptr,mx,soa,axfr,caa)
+   -e, -exclude-type value  dns query type to exclude (a,aaaa,cname,ns,txt,srv,ptr,mx,soa,axfr,caa) (default none)
 
 FILTER:
    -re, -resp          display dns response
@@ -101,7 +103,8 @@ UPDATE:
 
 OUTPUT:
    -o, -output string  file to write output
-   -json               write output in JSONL(ines) format
+   -j, -json           write output in JSONL(ines) format
+   -omit-raw, -or      omit raw dns response from jsonl output
 
 DEBUG:
    -hc, -health-check  run diagnostic check up
@@ -110,6 +113,7 @@ DEBUG:
    -raw, -debug        display raw dns response
    -stats              display stats of the running scan
    -version            display version of dnsx
+   -nc, -no-color      disable color in output
 
 OPTIMIZATION:
    -retry int                number of dns attempts to make (must be at least 1) (default 2)
@@ -118,11 +122,13 @@ OPTIMIZATION:
    -trace-max-recursion int  Max recursion for dns trace (default 32767)
    -resume                   resume existing scan
    -stream                   stream mode (wordlist, wildcard, stats and stop/resume will be disabled)
+   -timeout value            maximum time to wait for a DNS query to complete (default 3s)
 
 CONFIGURATIONS:
+   -auth                         configure projectdiscovery cloud (pdcp) api key (default true)
    -r, -resolver string          list of resolvers to use (file or comma separated)
    -wt, -wildcard-threshold int  wildcard filter threshold (default 5)
-   -wd, -wildcard-domain string  domain name for wildcard filtering (other flags will be ignored)
+   -wd, -wildcard-domain string  domain name for wildcard filtering (other flags will be ignored - only json output is supported)
 ```
 
 ## Running dnsx
@@ -459,6 +465,6 @@ func main() {
 - Domain name (`wd`) input is mandatory for wildcard elimination.
 - DNS record flag can not be used when using wildcard filtering.
 - DNS resolution (`l`) and DNS brute-forcing (`w`) can't be used together.
-- VPN operators tend to filter high DNS/UDP traffic, therefore the tool might experience packets loss (eg. [Mullvad VPN](https://github.com/projectdiscovery/dnsx/issues/221))
+- VPN operators tend to filter high DNS/UDP traffic, therefore the tool might experience packets loss (eg. [Mullvad VPN](https://github.com/projectdiscovery/dnsx/issues/221)). Check [this potential solution](./MULLVAD.md).
 
 `dnsx` is made with 🖤 by the [projectdiscovery](https://projectdiscovery.io) team.
