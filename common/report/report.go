@@ -61,9 +61,8 @@ func AddResultByResultEvent(result output.ResultEvent) {
 
 	b, e := json.Marshal(result)
 	if e == nil {
-		show := fmt.Sprintf("[%s] [%s] %v", result.TemplateID,
-			result.Info.SeverityHolder.Severity.String(),
-			result.Matched)
+		severityStr := result.Info.SeverityHolder.Severity.String()
+		show := fmt.Sprintf("[%s] [%s] %v", result.TemplateID, severityStr, result.Matched)
 		ddout.FormatOutput(ddout.OutputMessage{
 			Type:   "Nuclei",
 			Nuclei: string(b),
