@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"log"
 
 	"github.com/projectdiscovery/goflags"
@@ -14,8 +15,15 @@ func main() {
 
 	options := runner.Options{
 		Methods:         "GET",
-		InputTargetHost: goflags.StringSlice{"scanme.sh", "projectdiscovery.io"},
-		//InputFile: "./targetDomains.txt", // path to file containing the target domains list
+		InputTargetHost: goflags.StringSlice{"scanme.sh", "projectdiscovery.io", "localhost"},
+		OnResult: func(r runner.Result) {
+			// handle error
+			if r.Err != nil {
+				fmt.Printf("[Err] %s: %s\n", r.Input, r.Err)
+				return
+			}
+			fmt.Printf("%s %s %d\n", r.Input, r.Host, r.StatusCode)
+		},
 	}
 
 	if err := options.ValidateOptions(); err != nil {

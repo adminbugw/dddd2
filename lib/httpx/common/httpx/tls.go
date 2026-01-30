@@ -1,12 +1,16 @@
 package httpx
 
 import (
+	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"fmt"
 	"net"
 	"net/http"
 
 	"github.com/projectdiscovery/tlsx/pkg/tlsx/clients"
+	"github.com/projectdiscovery/tlsx/pkg/tlsx/ztls"
+	zmaptls "github.com/zmap/zcrypto/tls"
 )
 
 // versionToTLSVersionString converts tls version to version string
@@ -48,6 +52,44 @@ func (h *HTTPX) TLSGrab(r *http.Response) *clients.Response {
 	return response
 }
 
+func (h *HTTPX) ZTLSGrab(r *http.Response) *clients.Response {
+	host := r.Request.URL.Host
+	hostname, port, _ := net.SplitHostPort(host)
+	if hostname == "" {
+		hostname = host
+	}
+	if port == "" {
+		port = "443"
+	}
+	// canonical net concatenation
+	host = net.JoinHostPort(hostname, fmt.Sprint(port))
+	ctx, cancel := context.WithTimeout(context.Background(), h.Options.Timeout)
+	defer cancel()
+	tlsConn, err := h.Dialer.DialTLS(ctx, "tcp", host)
+	if err != nil {
+		return nil
+	}
+	ztlsConn, ok := (tlsConn).(*zmaptls.Conn)
+	if !ok {
+		return nil
+	}
+	ztlsState := ztlsConn.ConnectionState()
+	if len(ztlsState.PeerCertificates) == 0 {
+		return nil
+	}
+	response := &clients.Response{
+		Host:                hostname,
+		ProbeStatus:         true,
+		Port:                port,
+		Version:             versionToTLSVersionString[ztlsState.Version],
+		Cipher:              tls.CipherSuiteName(ztlsState.CipherSuite),
+		TLSConnection:       "ztls",
+		CertificateResponse: ztls.ConvertCertificateToResponse(&clients.Options{}, hostname, ztlsState.PeerCertificates[0]),
+		ServerName:          ztlsState.ServerName,
+	}
+	return response
+}
+
 func convertCertificateToResponse(hostname string, cert *x509.Certificate) *clients.CertificateResponse {
 	response := &clients.CertificateResponse{
 		SubjectAN:    cert.DNSNames,
@@ -55,7 +97,7 @@ func convertCertificateToResponse(hostname string, cert *x509.Certificate) *clie
 		NotBefore:    cert.NotBefore,
 		NotAfter:     cert.NotAfter,
 		Expired:      clients.IsExpired(cert.NotAfter),
-		SelfSigned:   clients.IsSelfSigned(cert.AuthorityKeyId, cert.SubjectKeyId),
+		SelfSigned:   clients.IsSelfSigned(cert.AuthorityKeyId, cert.SubjectKeyId, cert.DNSNames),
 		MisMatched:   clients.IsMisMatchedCert(hostname, append(cert.DNSNames, cert.Subject.CommonName)),
 		WildCardCert: clients.IsWildCardCert(append(cert.DNSNames, cert.Subject.CommonName)),
 		IssuerCN:     cert.Issuer.CommonName,
@@ -67,6 +109,7 @@ func convertCertificateToResponse(hostname string, cert *x509.Certificate) *clie
 			SHA1:   clients.SHA1Fingerprint(cert.Raw),
 			SHA256: clients.SHA256Fingerprint(cert.Raw),
 		},
+		Serial: clients.FormatToSerialNumber(cert.SerialNumber),
 	}
 	response.IssuerDN = clients.ParseASN1DNSequenceWithZpkixOrDefault(cert.RawIssuer, cert.Issuer.String())
 	response.SubjectDN = clients.ParseASN1DNSequenceWithZpkixOrDefault(cert.RawSubject, cert.Subject.String())

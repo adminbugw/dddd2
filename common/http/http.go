@@ -40,8 +40,8 @@ func UrlCallBack(resp runner.Result) {
 			// 没有这个path
 			md5 := resp.Hashes["body_md5"].(string)
 			headerMd5 := resp.Hashes["header_md5"].(string)
-			_ = structs.GlobalHttpBodyHMap.Set(md5, []byte(resp.Body))
-			_ = structs.GlobalHttpHeaderHMap.Set(headerMd5, []byte(resp.Header))
+			_ = structs.GlobalHttpBodyHMap.Set(md5, []byte(resp.ResponseBody))
+			_ = structs.GlobalHttpHeaderHMap.Set(headerMd5, []byte(resp.RawHeaders))
 			structs.GlobalURLMapLock.Lock()
 			structs.GlobalURLMap[rootURL].WebPaths[pth] = structs.UrlPathEntity{
 				Hash:             md5,
@@ -77,8 +77,8 @@ func UrlCallBack(resp runner.Result) {
 
 		md5 := resp.Hashes["body_md5"].(string)
 		headerMd5 := resp.Hashes["header_md5"].(string)
-		_ = structs.GlobalHttpBodyHMap.Set(md5, []byte(resp.Body))
-		_ = structs.GlobalHttpHeaderHMap.Set(headerMd5, []byte(resp.Header))
+		_ = structs.GlobalHttpBodyHMap.Set(md5, []byte(resp.ResponseBody))
+		_ = structs.GlobalHttpHeaderHMap.Set(headerMd5, []byte(resp.RawHeaders))
 
 		webPath := structs.UrlPathEntity{
 			Hash:             md5,
@@ -301,7 +301,7 @@ func DirBruteCallBack(resp runner.Result) {
 					if err != nil {
 						portInt = -1
 					}
-					r := ddfinger.SingleCheck(v, resp.Scheme, resp.Header, resp.Body, resp.WebServer, resp.Title, getTLSString(resp),
+					r := ddfinger.SingleCheck(v, resp.Scheme, resp.RawHeaders, resp.ResponseBody, resp.WebServer, resp.Title, getTLSString(resp),
 						portInt, resp.Path, "0", "0", resp.StatusCode, resp.ContentType, "")
 					// 满足这个products的要求
 					if r {
@@ -323,8 +323,8 @@ func DirBruteCallBack(resp runner.Result) {
 								// 没有这个path
 								md5 := resp.Hashes["body_md5"].(string)
 								headerMd5 := resp.Hashes["header_md5"].(string)
-								_ = structs.GlobalHttpBodyHMap.Set(md5, []byte(resp.Body))
-								_ = structs.GlobalHttpHeaderHMap.Set(headerMd5, []byte(resp.Header))
+								_ = structs.GlobalHttpBodyHMap.Set(md5, []byte(resp.ResponseBody))
+								_ = structs.GlobalHttpHeaderHMap.Set(headerMd5, []byte(resp.RawHeaders))
 								structs.GlobalURLMapLock.Lock()
 								structs.GlobalURLMap[rootURL].WebPaths[Url.Path] = structs.UrlPathEntity{
 									Hash:             md5,
@@ -443,8 +443,8 @@ func HostBindHTTPxCallBack(resp runner.Result) {
 			// 没有这个path
 			md5 := resp.Hashes["body_md5"].(string)
 			headerMd5 := resp.Hashes["header_md5"].(string)
-			_ = structs.GlobalHttpBodyHMap.Set(md5, []byte(resp.Body))
-			_ = structs.GlobalHttpHeaderHMap.Set(headerMd5, []byte(resp.Header))
+			_ = structs.GlobalHttpBodyHMap.Set(md5, []byte(resp.ResponseBody))
+			_ = structs.GlobalHttpHeaderHMap.Set(headerMd5, []byte(resp.RawHeaders))
 			structs.GlobalURLMapLock.Lock()
 			structs.GlobalURLMap[rootURL].WebPaths[urlFinal.Path] = structs.UrlPathEntity{
 				Hash:             md5,
@@ -468,8 +468,8 @@ func HostBindHTTPxCallBack(resp runner.Result) {
 
 		md5 := resp.Hashes["body_md5"].(string)
 		headerMd5 := resp.Hashes["header_md5"].(string)
-		_ = structs.GlobalHttpBodyHMap.Set(md5, []byte(resp.Body))
-		_ = structs.GlobalHttpHeaderHMap.Set(headerMd5, []byte(resp.Header))
+		_ = structs.GlobalHttpBodyHMap.Set(md5, []byte(resp.ResponseBody))
+		_ = structs.GlobalHttpHeaderHMap.Set(headerMd5, []byte(resp.RawHeaders))
 
 		webPath := structs.UrlPathEntity{
 			Hash:             md5,

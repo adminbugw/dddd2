@@ -33,50 +33,14 @@ func init() {
 	DefaultLogger.SetWriter(writer.NewCLI())
 }
 
-func AuditLogger(format string, args ...interface{}) {
-	if !Audit {
-		return
-	}
-	message := fmt.Sprintf(format, args...)
-	WriteFile(message, AuditLogFileName)
-}
-
-func AuditTimeLogger(format string, args ...interface{}) {
-	if !Audit {
-		return
-	}
-	loc, _ := time.LoadLocation("Asia/Shanghai")
-	currentTime := time.Now().In(loc).String()
-	message := fmt.Sprintf(format, args...)
-	WriteFile("[ "+currentTime+" ] "+message, AuditLogFileName)
-}
-
-// Logger is a logger for logging structured data in a beautfiul and fast manner.
+// Logger is a logger for logging structured data in a beautiful and fast manner.
 type Logger struct {
 	writer            writer.Writer
 	maxLevel          levels.Level
 	formatter         formatter.Formatter
 	timestampMinLevel levels.Level
 	timestamp         bool
-}
-
-func WriteFile(result string, filename string) {
-	if strings.Contains(result, "\033[36m") {
-		result = strings.ReplaceAll(result, "\033[36m", "")
-		result = strings.ReplaceAll(result, "\033[0m", "")
-	}
-
-	var text = []byte(result + "\n")
-	fl, err := os.OpenFile(filename, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0666)
-	if err != nil {
-		fmt.Printf("Open %s error, %v\n", filename, err)
-		return
-	}
-	_, err = fl.Write(text)
-	fl.Close()
-	if err != nil {
-		fmt.Printf("Write %s error, %v\n", filename, err)
-	}
+	timestampFormat   string
 }
 
 // Log logs a message to a logger instance
@@ -93,22 +57,7 @@ func (l *Logger) Log(event *Event) {
 	if err != nil {
 		return
 	}
-
-	if event.level != levels.LevelDebug {
-		l.writer.Write(data, event.level)
-	}
-
-	if Audit {
-		loc, err := time.LoadLocation("Asia/Shanghai")
-		currentTime := ""
-		if err != nil {
-			currentTime = time.Now().String()
-		} else {
-			currentTime = time.Now().In(loc).String()
-		}
-
-		WriteFile("[ "+currentTime+" ] "+string(data), AuditLogFileName)
-	}
+	l.writer.Write(data, event.level)
 
 	if event.level == levels.LevelFatal {
 		os.Exit(1)
@@ -130,10 +79,17 @@ func (l *Logger) SetWriter(writer writer.Writer) {
 	l.writer = writer
 }
 
-// SetTimestamp enables/disables automatic timestamp
+// SetTimestamp enables/disables automatic or custom timestamp
 func (l *Logger) SetTimestamp(timestamp bool, minLevel levels.Level) {
+	l.SetTimestampWithFormat(timestamp, minLevel, time.RFC3339)
+}
+
+func (l *Logger) SetTimestampWithFormat(timestamp bool, minLevel levels.Level, format string) {
 	l.timestamp = timestamp
 	l.timestampMinLevel = minLevel
+	if len(format) > 0 {
+		l.timestampFormat = format
+	}
 }
 
 // Event is a log event to be written with data
@@ -172,7 +128,11 @@ func (e *Event) Label(label string) *Event {
 
 // TimeStamp adds timestamp to the log event
 func (e *Event) TimeStamp() *Event {
-	e.metadata["timestamp"] = time.Now().Format(time.RFC3339)
+	timestampFormat := time.RFC3339
+	if e.logger.timestampFormat != "" {
+		timestampFormat = e.logger.timestampFormat
+	}
+	e.metadata["timestamp"] = time.Now().Format(timestampFormat)
 	return e
 }
 
@@ -308,4 +268,44 @@ func (l *Logger) Verbose() *Event {
 
 func isCurrentLevelEnabled(e *Event) bool {
 	return e.level <= e.logger.maxLevel
+}
+
+// WriteFile writes a log message to a file
+func WriteFile(result string, filename string) {
+	if strings.Contains(result, "\033[36m") {
+		result = strings.ReplaceAll(result, "\033[36m", "")
+		result = strings.ReplaceAll(result, "\033[0m", "")
+	}
+
+	var text = []byte(result + "\n")
+	fl, err := os.OpenFile(filename, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0666)
+	if err != nil {
+		fmt.Printf("Open %s error, %v\n", filename, err)
+		return
+	}
+	_, err = fl.Write(text)
+	fl.Close()
+	if err != nil {
+		fmt.Printf("Write %s error, %v\n", filename, err)
+	}
+}
+
+// AuditLogger logs a message to audit file if audit is enabled
+func AuditLogger(format string, args ...interface{}) {
+	if !Audit {
+		return
+	}
+	message := fmt.Sprintf(format, args...)
+	WriteFile(message, AuditLogFileName)
+}
+
+// AuditTimeLogger logs a message with timestamp to audit file if audit is enabled
+func AuditTimeLogger(format string, args ...interface{}) {
+	if !Audit {
+		return
+	}
+	loc, _ := time.LoadLocation("Asia/Shanghai")
+	currentTime := time.Now().In(loc).String()
+	message := fmt.Sprintf(format, args...)
+	WriteFile("[ "+currentTime+" ] "+message, AuditLogFileName)
 }

@@ -1,25 +1,35 @@
 module github.com/projectdiscovery/gologger
 
-go 1.19
+go 1.24.0
 
 require (
+	github.com/djherbis/times v1.6.0
 	github.com/json-iterator/go v1.1.12
-	github.com/logrusorgru/aurora v2.0.3+incompatible
-	github.com/mholt/archiver v3.1.1+incompatible
-	gopkg.in/djherbis/times.v1 v1.3.0
+	github.com/logrusorgru/aurora/v4 v4.0.0
+	github.com/mholt/archives v0.1.5
+	github.com/projectdiscovery/utils v0.8.0
 )
 
 require (
-	github.com/dsnet/compress v0.0.1 // indirect
-	github.com/frankban/quicktest v1.11.3 // indirect
-	github.com/golang/snappy v0.0.4 // indirect
-	github.com/kr/text v0.2.0 // indirect
+	github.com/STARRY-S/zip v0.2.3 // indirect
+	github.com/andybalholm/brotli v1.2.0 // indirect
+	github.com/bodgit/plumbing v1.3.0 // indirect
+	github.com/bodgit/sevenzip v1.6.1 // indirect
+	github.com/bodgit/windows v1.0.1 // indirect
+	github.com/dsnet/compress v0.0.2-0.20230904184137-39efe44ab707 // indirect
+	github.com/hashicorp/golang-lru/v2 v2.0.7 // indirect
+	github.com/klauspost/compress v1.18.2 // indirect
+	github.com/klauspost/pgzip v1.2.6 // indirect
+	github.com/mikelolasagasti/xz v1.0.1 // indirect
+	github.com/minio/minlz v1.0.1 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
 	github.com/modern-go/reflect2 v1.0.2 // indirect
-	github.com/nwaples/rardecode v1.1.3 // indirect
-	github.com/pierrec/lz4 v2.6.1+incompatible // indirect
-	github.com/stretchr/testify v1.7.0 // indirect
-	github.com/ulikunitz/xz v0.5.11 // indirect
-	github.com/xi2/xz v0.0.0-20171230120015-48954b6210f8 // indirect
-	gopkg.in/yaml.v3 v3.0.0-20210107192922-496545a6307b // indirect
+	github.com/nwaples/rardecode/v2 v2.2.2 // indirect
+	github.com/pierrec/lz4/v4 v4.1.23 // indirect
+	github.com/sorairolake/lzip-go v0.3.8 // indirect
+	github.com/spf13/afero v1.15.0 // indirect
+	github.com/ulikunitz/xz v0.5.15 // indirect
+	go4.org v0.0.0-20230225012048-214862532bf5 // indirect
+	golang.org/x/sys v0.38.0 // indirect
+	golang.org/x/text v0.32.0 // indirect
 )

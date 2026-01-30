@@ -18,7 +18,6 @@ import (
 	"github.com/projectdiscovery/nuclei/v3/pkg/exportrunner"
 	"github.com/projectdiscovery/nuclei/v3/pkg/operators/common/dsl"
 	"github.com/projectdiscovery/nuclei/v3/pkg/types"
-	errorutil "github.com/projectdiscovery/utils/errors"
 	fileutil "github.com/projectdiscovery/utils/file"
 )
 
@@ -578,6 +577,6 @@ func cleanupOldResumeFiles() {
 func init() {
 	// print stacktrace of errors in debug mode
 	if os.Getenv("DEBUG") != "" {
-		errorutil.ShowStackTrace = true
+		// 已弃用: errorutil.ShowStackTrace = true
 	}
 }

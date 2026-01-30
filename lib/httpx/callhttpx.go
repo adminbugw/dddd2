@@ -3,8 +3,6 @@ package httpx
 import (
 	"github.com/projectdiscovery/gologger"
 	"github.com/projectdiscovery/httpx/runner"
-	errorutil "github.com/projectdiscovery/utils/errors"
-	"os"
 	"strings"
 )
 
@@ -39,6 +37,7 @@ func RemoveUsedUrl(urls []string) []string {
 
 var GlobalUsedUrl []string
 
+// CallHTTPx 调用 httpx 进行 HTTP 响应探测
 func CallHTTPx(urls []string, callBack func(resp runner.Result), proxy string, threads int, timeout int) {
 	gologger.Info().Msg("获取Web响应中")
 
@@ -60,21 +59,21 @@ func CallHTTPx(urls []string, callBack func(resp runner.Result), proxy string, t
 			ExtractTitle:              true,
 			Timeout:                   timeout,
 			Retries:                   2,
-			HTTPProxy:                 proxy,
+			Proxy:                     proxy,
 			NoFallbackScheme:          true,
 			RandomAgent:               true,
 			Threads:                   threads,
+			OnResult:                  callBack,
 		}
 
 		if err := options.ValidateOptions(); err != nil {
-			gologger.Error().Msgf("params error")
+			gologger.Error().Msgf("params error: %v", err)
 		}
 
 		httpxRunner, err := runner.New(&options)
 		if err != nil {
-			gologger.Error().Msgf("runner.New(&options) error")
+			gologger.Error().Msgf("runner.New(&options) error: %v", err)
 		}
-		httpxRunner.CallBack = callBack
 
 		for _, u := range nextUrls {
 			GlobalUsedUrl = append(GlobalUsedUrl, u)
@@ -82,21 +81,19 @@ func CallHTTPx(urls []string, callBack func(resp runner.Result), proxy string, t
 		GlobalUsedUrl = RemoveDuplicateElement(GlobalUsedUrl)
 
 		httpxRunner.RunEnumeration()
-		nextUrls = RemoveUsedUrl(httpxRunner.NextCheckUrl)
+
+		// 新版本中不再支持 NextCheckUrl，这里留空或使用其他方式获取待重试的URL
+		// nextUrls = RemoveUsedUrl(httpxRunner.NextCheckUrl)
+		nextUrls = []string{}
+
 		httpxRunner.Close()
 		times += 1
 
 	}
 	gologger.AuditTimeLogger("响应探测结束")
-
 }
 
-func init() {
-	if os.Getenv("DEBUG") != "" {
-		errorutil.ShowStackTrace = true
-	}
-}
-
+// DirBrute 使用 httpx 进行目录爆破
 func DirBrute(urls []string, callBack func(resp runner.Result), proxy string, threads int, timeout int) {
 	urls = RemoveDuplicateElement(urls)
 
@@ -111,23 +108,22 @@ func DirBrute(urls []string, callBack func(resp runner.Result), proxy string, th
 		MaxRedirects:              5,
 		ExtractTitle:              true,
 		Timeout:                   timeout,
-		IsBrute:                   true,
 		Retries:                   2,
-		HTTPProxy:                 proxy,
+		Proxy:                     proxy,
 		NoFallbackScheme:          true,
 		RandomAgent:               true,
 		Threads:                   threads,
+		OnResult:                  callBack,
 	}
 
 	if err := options.ValidateOptions(); err != nil {
-		gologger.Error().Msgf("params error")
+		gologger.Error().Msgf("params error: %v", err)
 	}
 
 	httpxRunner, err := runner.New(&options)
 	if err != nil {
-		gologger.Error().Msgf("runner.New(&options) error")
+		gologger.Error().Msgf("runner.New(&options) error: %v", err)
 	}
-	httpxRunner.CallBack = callBack
 
 	httpxRunner.RunEnumeration()
 	httpxRunner.Close()

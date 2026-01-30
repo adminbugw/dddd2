@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-// RunNucleiAndGetResults returns a list of results for a template
+// RunHttpxAndGetResults returns a list of the results
 func RunHttpxAndGetResults(url string, debug bool, extra ...string) ([]string, error) {
 	cmd := exec.Command("bash", "-c")
 	cmdLine := `echo "` + url + `" | ./httpx `
@@ -26,7 +26,7 @@ func RunHttpxAndGetResults(url string, debug bool, extra ...string) ([]string, e
 		return nil, err
 	}
 	parts := []string{}
-	items := strings.Split(string(data), "\n")
+	items := strings.Split(strings.TrimSpace(string(data)), "\n")
 	for _, i := range items {
 		if i != "" {
 			parts = append(parts, i)
@@ -35,7 +35,7 @@ func RunHttpxAndGetResults(url string, debug bool, extra ...string) ([]string, e
 	return parts, nil
 }
 
-// RunNucleiAndGetResults returns a list of results for a template
+// RunHttpxAndGetCombinedResults returns the results as a single string variable
 func RunHttpxAndGetCombinedResults(url string, debug bool, extra ...string) (string, error) {
 	cmd := exec.Command("bash", "-c")
 	cmdLine := `echo "` + url + `" | ./httpx `
@@ -53,6 +53,8 @@ func RunHttpxAndGetCombinedResults(url string, debug bool, extra ...string) (str
 	}
 	return string(data), nil
 }
+
+// RunHttpxBinaryAndGetResults returns a list of the results
 func RunHttpxBinaryAndGetResults(target string, httpxBinary string, debug bool, args []string) ([]string, error) {
 	cmd := exec.Command("bash", "-c")
 	cmdLine := fmt.Sprintf(`echo %s | %s `, target, httpxBinary)
@@ -70,7 +72,7 @@ func RunHttpxBinaryAndGetResults(target string, httpxBinary string, debug bool, 
 		return nil, err
 	}
 	parts := []string{}
-	items := strings.Split(string(data), "\n")
+	items := strings.Split(strings.TrimSpace(string(data)), "\n")
 	for _, i := range items {
 		if i != "" {
 			parts = append(parts, i)
